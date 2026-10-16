@@ -19,6 +19,7 @@
 - [The five things that will break](#the-five-things-that-will-break)
 - [Quick start](#quick-start)
 - [Interactive menu (TUI)](#interactive-menu-tui)
+- [Configuration](#configuration)
 - [Safety model — at a glance](#safety-model--at-a-glance)
 - [Repository layout](#repository-layout)
 - [Detailed walkthrough](#detailed-walkthrough)
@@ -206,7 +207,7 @@ The rest of this document explains and reproduces every step manually, so you ca
 ```console
 $ sudo ./menu.sh
 
-  proxmox-dietpi-rpi4  v1.1.0
+  proxmox-dietpi-rpi4  v1.2.0
   ────────────────────────────────────────────────────────────
   host    DietPi   192.168.0.15
   net     eth0 → vmbr0   up (192.168.0.15)
@@ -214,16 +215,17 @@ $ sudo ./menu.sh
   tailsc. present (Running)
   stage   4 of 4 (inferred)
   ────────────────────────────────────────────────────────────
+  docs: README.md · docs/safety.md
 
   ▸ Install / finish setup (guided)
     Preflight safety checks (read-only)
     Verify installation (3× independent)
+    Edit configuration
     Show status (read-only)
     Repair known issues
     Tailscale subnet router
     Rollback / uninstall
     Help
-    Quit
 
   ↑/↓ or k/j move · Enter select · 1-9 jump · q quit
 ```
@@ -233,6 +235,7 @@ $ sudo ./menu.sh
 | Install / finish setup | `install.sh` (gated stages 1–4) | yes, after the gates |
 | Preflight safety checks | `preflight.sh` | **no** — read-only |
 | Verify installation | `04-verify.sh` (3 independent passes) | **no** (except `--smoke`) |
+| **Edit configuration** | `config.sh` | writes `00-config.local.sh` |
 | Show status | `status.sh` | **no** — read-only |
 | Repair known issues | `repair.sh` (idempotent) | yes |
 | Tailscale subnet router | `tailscale.sh` | yes |
@@ -251,6 +254,66 @@ sudo ./rollback.sh --list          # show what rollback would restore
 ```
 
 On a non-TTY (CI, piped) the menu degrades gracefully to a numbered prompt.
+
+---
+
+## Configuration
+
+All settings live in **[`scripts/00-config.sh`](scripts/00-config.sh)** — set them
+there, or edit them from the menu (**Edit configuration**), which validates every
+value before accepting it.
+
+```console
+$ sudo ./config.sh --show
+
+Effective configuration  (with overrides from 00-config.local.sh)
+────────────────────────────────────────────────────────────
+    PI_HOSTNAME     DietPi
+  * PI_IP           192.168.0.21
+    PI_CIDR         24
+    PI_GATEWAY      192.168.0.1
+    PI_DNS          1.1.1.1 1.0.0.1
+    NIC             eth0
+    BRIDGE          vmbr0
+    PI_SUBNET       192.168.0.0/24
+    WORKDIR         /root/proxmox-setup
+    PVE_PACKAGES    proxmox-ve postfix open-iscsi pve-edk2-firmware-aarch64
+    PVE_TEMPLATES   debian-13-standard_13.6-1_arm64.tar.zst alpine-3.24-default_20260803_arm64.tar.xz
+────────────────────────────────────────────────────────────
+  * = overridden in 00-config.local.sh
+```
+
+| Key | Meaning |
+|---|---|
+| `PI_HOSTNAME` | hostname (must match `hostname`) |
+| `PI_IP` / `PI_CIDR` | static address for the Pi / the Proxmox bridge |
+| `PI_GATEWAY` | router |
+| `PI_DNS` | resolvers (space-separated) |
+| `NIC` | physical **wired** interface to enslave |
+| `BRIDGE` | Proxmox bridge name |
+| `PI_SUBNET` | LAN subnet to advertise over Tailscale |
+| `WORKDIR` | where backups/logs/helpers live on the Pi |
+| `PVE_PACKAGES` / `PVE_TEMPLATES` | what to install / pre-download |
+
+**How edits are stored.** The editor never rewrites `00-config.sh`. It writes
+only the values you changed to **`scripts/00-config.local.sh`**, which is
+gitignored and sourced *after* `00-config.sh`, so your settings win and survive
+`git pull`. Delete it (or **Reset ALL values to defaults**) to go back.
+
+Validation is built in — bad IPv4, bad CIDR, bad hostname, non-absolute paths and
+invalid interface names are rejected with a reason, and interface/subnet changes
+add a reminder about the Tailscale route:
+
+```console
+$ ./config.sh --set PI_IP=999.1.1.1
+  [FAIL] PI_IP: not a valid IPv4 address
+$ ./config.sh --set PI_SUBNET=192.168.0.0/99
+  [FAIL] PI_SUBNET: not a valid CIDR (e.g. 192.168.0.0/24)
+```
+
+Also available: `--detect` (fill values from the running system —
+address, prefix, gateway, DNS, NIC beneath a bridge, and the derived subnet) and
+`--unset KEY`.
 
 ---
 
@@ -293,7 +356,9 @@ proxmox-dietpi-rpi4/
 │   └── troubleshooting.md        deep diagnostics + locked-out-Pi recovery
 └── scripts/
     ├── 00-config.sh              ★ edit this first (IP, gateway, NIC, bridge, subnet)
+    ├── 00-config.local.sh        your overrides — gitignored, created by config.sh
     ├── menu.sh                   interactive TUI
+    ├── config.sh                 view / edit configuration (TUI + CLI, validated)
     ├── install.sh                guided, resumable driver (stages 1–4)
     ├── preflight.sh              gate 1 — read-only safety checks
     ├── 01-prepare.sh             gate 2+3 — repo, backups, hosts, ifupdown2

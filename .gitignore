@@ -2,6 +2,9 @@
 *.log
 .stage
 
+# Local configuration overrides (created by the TUI "Edit configuration")
+scripts/00-config.local.sh
+
 # Editor / OS cruft
 .DS_Store
 Thumbs.db

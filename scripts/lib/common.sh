@@ -10,7 +10,7 @@
 # ---------------------------------------------------------------------------
 
 # shellcheck disable=SC2034
-PVE_RPI_VERSION="1.1.0"
+PVE_RPI_VERSION="1.2.0"
 
 # ---- colours (only when stdout is a terminal) -----------------------------
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then

@@ -35,6 +35,18 @@
 # confirmation + triple verification). Do not disable unless you mean it.
 : "${REQUIRE_TRIPLE:=1}"
 
+# ---------------------------------------------------------------------------
+# Optional local overrides — created by the TUI "Edit configuration" screen.
+# Not tracked by git, so it survives `git pull` and keeps the repo clean.
+# Any variable set here wins over the defaults above.
+# ---------------------------------------------------------------------------
+_cfg_self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/00-config.local.sh"
+if [ -f "$_cfg_self" ]; then
+  # shellcheck source=/dev/null
+  . "$_cfg_self"
+fi
+unset _cfg_self
+
 # Proxmox packages to install.
 : "${PVE_PACKAGES:=proxmox-ve postfix open-iscsi pve-edk2-firmware-aarch64}"
 

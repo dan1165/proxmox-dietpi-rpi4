@@ -3,6 +3,37 @@
 All notable changes to this guide/tooling are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2.0] — 2026-10-16
+
+### Added
+- **Edit configuration from the TUI** — a new menu entry opens
+  `scripts/config.sh`: pick any setting, type a new value, and it is validated
+  and saved. Also supports autodetect, preflight re-run, and reset.
+- **`scripts/config.sh`** — view/edit configuration:
+  - `--show` effective configuration (marks overridden keys)
+  - `--set KEY=VALUE` / `--unset KEY` (scriptable)
+  - `--detect` fills address, prefix, gateway, DNS, the physical NIC beneath a
+    bridge, and the derived subnet from the running system
+  - `--reset` deletes all overrides
+- **Per-key validation** before anything is accepted: IPv4, CIDR, hostname
+  syntax, absolute paths, interface-name syntax; interface and subnet changes
+  print targeted reminders.
+- **`scripts/00-config.local.sh`** — overrides written here instead of editing
+  `00-config.sh`. It is **gitignored** and sourced after the defaults, so your
+  settings win and survive `git pull`. Only keys that differ from the built-in
+  defaults are stored (a minimal diff). Managed via `.gitignore`.
+
+### Changed
+- `menu.sh` gained an **Edit configuration** entry (menu stays 9 items so number
+  jumping keeps working); the header now carries a docs hint.
+- Configuration is applied via a gitignored override file, so the repository is
+  never dirtied by local settings.
+
+### Notes
+- Values containing spaces (e.g. `PI_DNS`, `PVE_TEMPLATES`) are persisted with
+  shell-safe quoting, and `config.sh` avoids `eval` for assignment so they
+  round-trip exactly.
+
 ## [1.1.0] — 2026-10-16
 
 Safety, UX and reliability release. Nothing about the install procedure changed;

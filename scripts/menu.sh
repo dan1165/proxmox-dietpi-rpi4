@@ -39,6 +39,7 @@ run_action() {
     install)   "$HERE/install.sh" ;;
     preflight) "$HERE/preflight.sh" ;;
     verify)    "$HERE/04-verify.sh" --triple ;;
+    config)    "$HERE/config.sh" ;;
     status)    "$HERE/status.sh" ;;
     repair)    "$HERE/repair.sh" ;;
     tailscale) "$HERE/tailscale.sh" ;;
@@ -59,19 +60,23 @@ ${C_BOLD}proxmox-dietpi-rpi4 — help${C_RESET}
     Gate 3  verify      every applied change is verified by 3 independent checks
 
   ${C_BOLD}Menu actions${C_RESET}
-    1 install      guided install / resume (runs the gates per stage)
+    1 install      guided install / resume (gated; re-run after the reboot)
     2 preflight    read-only safety checks; nothing is modified
     3 verify       full verification, 3 independent passes
-    4 status       read-only overview (host, net, Proxmox, Tailscale)
-    5 repair       re-apply all known fixes idempotently
-    6 tailscale    install/configure the Tailscale subnet router
-    7 rollback     triple-confirmed revert (optionally purge Proxmox)
-    8 quit
+    4 config       view / edit configuration (writes 00-config.local.sh)
+    5 status       read-only overview (host, net, Proxmox, Tailscale)
+    6 repair       re-apply all known fixes idempotently
+    7 tailscale    install/configure the Tailscale subnet router
+    8 rollback     triple-confirmed revert (optionally purge Proxmox)
+    9 help         this text            ·  q quits
 
   ${C_BOLD}Non-interactive${C_RESET}
     sudo ./menu.sh --action verify
-    sudo ./install.sh            # resumable stages 1-4
-    sudo ./install.sh --smoke    # stage 4 with a live LXC smoke test
+    sudo ./config.sh --show                 # effective configuration
+    sudo ./config.sh --set PI_IP=192.168.0.20
+    sudo ./config.sh --detect               # fill from this system
+    sudo ./install.sh                       # resumable stages 1-4
+    sudo ./install.sh --smoke               # stage 4 with a live LXC smoke test
 
   ${C_BOLD}Keys${C_RESET}   ↑/↓ or k/j move · Enter select · 1-9 jump · q quit
 
@@ -90,26 +95,28 @@ fi
 [ -t 0 ] && clear 2>/dev/null || true
 while :; do
   header=$("$HERE/status.sh" --brief 2>/dev/null)
+  header="$header
+  ${C_DIM}docs: README.md · docs/safety.md${C_RESET}"
   if tui_menu "$header" \
       "Install / finish setup (guided)" \
       "Preflight safety checks (read-only)" \
       "Verify installation (3× independent)" \
+      "Edit configuration" \
       "Show status (read-only)" \
       "Repair known issues" \
       "Tailscale subnet router" \
       "Rollback / uninstall" \
-      "Help" \
-      "Quit"; then
+      "Help"; then
     case "$TUI_CHOICE" in
       1) run_action install ;;
       2) run_action preflight ;;
       3) run_action verify ;;
-      4) run_action status ;;
-      5) run_action repair ;;
-      6) run_action tailscale ;;
-      7) run_action rollback ;;
-      8) run_action help ;;
-      9) printf '\n%sbye.%s\n' "$C_DIM" "$C_RESET"; exit 0 ;;
+      4) run_action config ;;
+      5) run_action status ;;
+      6) run_action repair ;;
+      7) run_action tailscale ;;
+      8) run_action rollback ;;
+      9) run_action help ;;
     esac
     pause
     [ -t 0 ] && clear 2>/dev/null || true
