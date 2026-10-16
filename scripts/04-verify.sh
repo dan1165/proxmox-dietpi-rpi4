@@ -42,6 +42,7 @@ pass_systemd() {
   chk "systemd-logind not masked" bash -c '[ "$(systemctl is-enabled systemd-logind 2>&1)" != masked ]'
   chk "networking.service is active" systemctl is-active --quiet networking
   chk "iptables uses the nft backend" bash -c 'iptables -V | grep -q nf_tables'
+  chk "memory cgroup controller available" bash -c 'grep -qw memory /sys/fs/cgroup/cgroup.controllers'
 }
 
 # --- Pass B — raw processes, ports, HTTP (no systemd) -----------------------

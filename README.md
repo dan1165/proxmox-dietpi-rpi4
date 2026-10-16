@@ -16,7 +16,7 @@
 - [Why not just use Raspberry Pi OS Lite?](#why-not-just-use-raspberry-pi-os-lite)
 - [What you get](#what-you-get)
 - [Requirements](#requirements)
-- [The five things that will break](#the-five-things-that-will-break)
+- [The six things that will break](#the-six-things-that-will-break)
 - [Quick start](#quick-start)
 - [Interactive menu (TUI)](#interactive-menu-tui)
 - [Configuration](#configuration)
@@ -117,7 +117,7 @@ None of these are blockers. All of them need handling, and this guide handles th
 
 ---
 
-## The five things that will break
+## The six things that will break
 
 Read this once. It's the section that saves you hours.
 
@@ -174,6 +174,40 @@ Harmless, but noisy and non‑standard for a Debian/Proxmox host. **Fix:** unmas
 ### 5. Proxmox wants to own `/etc/network/interfaces`
 
 DietPi configures the NIC through a drop‑in (`/etc/network/interfaces.d/eth0.conf`) that the main file sources. Proxmox expects a single authoritative file containing a bridge. If you leave both, you get double‑configuration and a broken boot. **Fix:** move DietPi's drop‑in aside and write one explicit file ([Step 4](#step-4--rebuild-networking-around-a-bridge)).
+
+### 6. The Raspberry Pi device tree disables the memory cgroup
+
+On a Pi, `/sys/fs/cgroup/cgroup.controllers` reports only `cpuset cpu io pids` — **there is no `memory`**:
+
+```console
+$ dmesg | grep -i cgroup
+cgroup: Disabling memory control group subsystem
+```
+
+That token comes from the **device tree** (`bcm2711-rpi-4-b.dtb` → `/chosen/bootargs`), which the firmware passes *before* `cmdline.txt`. It's why `cgroup_disable=memory` shows up in `/proc/cmdline` and `dmesg` but in **no file under `/boot`** — so you can't find it, and editing `cmdline.txt` alone won't remove it.
+
+**Consequence:** **LXC memory limits are silently not enforced.** A container configured for 2 GB uses more, and `free` inside reports the *host's* RAM. Proxmox happily shows `memory: 2048` while nothing enforces it.
+
+**Fix:** append `cgroup_no_v1=all cgroup_enable=memory` to `cmdline.txt` and reboot.
+[`scripts/cgroup-fix.sh`](scripts/cgroup-fix.sh) does this idempotently, and **stage 1 applies it automatically** so the stage-2 reboot activates it. `cgroup_enable=memory` re-enables the controller the device tree turned off:
+
+```console
+$ dmesg | grep -i cgroup
+cgroup: Disabling memory control group subsystem
+cgroup: Enabling memory control group subsystem      # ← re-enabled
+$ cat /sys/fs/cgroup/cgroup.controllers
+cpuset cpu io memory pids                            # ← memory present
+```
+
+Then prove the limit is real (note: the *payload* cgroup is `lxc/<vmid>`, **not** the systemd monitor scope):
+
+```bash
+pct config 100 | grep -E '^memory'          # memory: 2048
+cat /sys/fs/cgroup/lxc/100/memory.max       # 2147483648   (2 GiB, enforced)
+pct exec 100 -- free -h                     # Mem: 2.0Gi
+```
+
+Without the fix, that last command prints the host's RAM and `memory.max` reads `max`.
 
 ---
 
@@ -370,6 +404,7 @@ proxmox-dietpi-rpi4/
     ├── status.sh                 read-only overview (host/net/Proxmox/Tailscale)
     ├── tailscale.sh              install + configure the subnet router
     ├── pve-pi-fix.sh             force the nft iptables backend
+    ├── cgroup-fix.sh             enable the memory cgroup controller (the Pi DTB disables it)
     ├── net-guard.sh              boot-time network rollback guard
     ├── net-failsafe.sh           guards the ifupdown→ifupdown2 swap
     ├── patch-aplinfo.py          drop the unverifiable template mirror
@@ -523,6 +558,14 @@ The following packages will be REMOVED:
 > This is a known `ifupdown2` first‑install quirk.
 
 > **Heads‑up:** swapping the package briefly stops `networking.service` while dpkg replaces it. Your SSH session may blip. That's normal; the boot guard in [Step 5](#step-5--reboot-with-an-automatic-rollback-guard) covers the rare case where it doesn't come back.
+
+**3.1 — Enable the memory cgroup controller** (see [thing #6](#6-the-raspberry-pi-device-tree-disables-the-memory-cgroup)):
+
+```bash
+./cgroup-fix.sh
+```
+
+It appends `cgroup_no_v1=all cgroup_enable=memory` to `/boot/firmware/cmdline.txt` (after backing it up) and reports that a reboot is required. You **don't** need to reboot now — Step 5 reboots anyway, which activates it. Verify afterwards with `./cgroup-fix.sh --check`.
 
 ---
 

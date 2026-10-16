@@ -130,6 +130,14 @@ else
 fi
 command -v nft >/dev/null 2>&1 && _p "nftables userspace present" || _w "nft command missing" "iptables-nft still works via libnftables"
 
+# ---- 8b. memory cgroup (Raspberry Pi disables it in the device tree) -------
+if grep -qw memory /sys/fs/cgroup/cgroup.controllers 2>/dev/null; then
+  _p "memory cgroup controller available (container memory limits enforced)"
+else
+  _w "memory cgroup controller MISSING" \
+     "the Pi device tree passes cgroup_disable=memory, so LXC memory limits are NOT enforced — run cgroup-fix.sh (stage 1 does this automatically)"
+fi
+
 # ---- 9. apt / packages ----------------------------------------------------
 run_chk hard "apt package lists are usable" bash -c 'apt-get -s update >/dev/null 2>&1 || apt-cache pkgnames >/dev/null'
 run_chk soft "ifupdown2 is installable" bash -c 'apt-cache policy ifupdown2 2>/dev/null | grep -q Candidate'

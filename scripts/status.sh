@@ -91,6 +91,7 @@ printf '  net-guard   %s\n' "$(ng=$(systemctl is-enabled net-guard.service 2>/de
 
 printf '\n%sHealth%s\n' "$C_BOLD$C_CYAN" "$C_RESET"
 printf '  failed units %s\n' "$(systemctl --failed --no-legend 2>/dev/null | wc -l)"
+printf '  mem cgroup   %s\n' "$(grep -qw memory /sys/fs/cgroup/cgroup.controllers 2>/dev/null && echo active || echo 'MISSING — container memory limits unenforced (run cgroup-fix.sh)')"
 if pve_installed; then
   printf '  fw errors    %s (this boot)\n' "$(journalctl -u pve-firewall -b --no-pager 2>/dev/null | grep -ci error)"
 fi

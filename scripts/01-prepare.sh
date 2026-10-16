@@ -93,6 +93,20 @@ EOF
 fi
 
 # ---- fail-safe -------------------------------------------------------------
+say "Enabling the memory cgroup controller (Raspberry Pi disables it)"
+# The Pi device tree passes cgroup_disable=memory, so LXC memory limits are
+# silently unenforced. Stage 2 reboots, which activates this.
+if "$HERE/cgroup-fix.sh" >/dev/null 2>&1; then
+  step "memory cgroup already active"
+else
+  rc=$?
+  if [ "$rc" = 10 ]; then
+    note "queued the memory-cgroup kernel cmdline fix (activated by the stage-2 reboot)"
+  else
+    warn "cgroup-fix.sh reported an error (rc=$rc) — container memory limits may not work"
+  fi
+fi
+
 say "Arming fail-safe (guards the ifupdown → ifupdown2 swap)"
 sed "s|__GATEWAY__|$PI_GATEWAY|g" "$HERE/net-failsafe.sh" > "$WORKDIR/net-failsafe.sh"
 install -m 755 "$WORKDIR/net-failsafe.sh" /usr/local/sbin/net-failsafe.sh
@@ -122,6 +136,7 @@ gate_triple "stage 1" \
   "hostname resolves to $PI_IP::grep -qE \"^$PI_IP[[:space:]]+$(hostname)\\\\b\" /etc/hosts && [ \"\$(hostname --ip-address)\" = \"$PI_IP\" ]" \
   "ifupdown2 installed::dpkg -s ifupdown2 >/dev/null 2>&1" \
   "ifup command works::command -v ifup >/dev/null" \
+  "memory cgroups active or queued::grep -qw memory /sys/fs/cgroup/cgroup.controllers 2>/dev/null || grep -qw cgroup_enable=memory /boot/firmware/cmdline.txt 2>/dev/null" \
   "original interfaces backed up::test -f $WORKDIR/backup/interfaces"
 
 state_set 2

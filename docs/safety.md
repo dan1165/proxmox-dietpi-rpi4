@@ -60,6 +60,7 @@ It reports `pass / warn / fail` and exits non-zero if anything is a **blocker**.
 | `/etc/hosts` not pointing at `PI_IP` |
 | guests are running (a rollback could disrupt them) |
 | `nft` userspace command missing |
+| **memory cgroup controller missing** — the Pi device tree passes `cgroup_disable=memory`, so LXC memory limits would be silently unenforced (stage 1 fixes this automatically) |
 
 ### Gate 2 — explicit confirmation
 
@@ -113,6 +114,7 @@ the reboot.
 | **Resumable state** | `$WORKDIR/.stage` | Survives the mandatory mid-install reboot; `install.sh` continues where it left off. |
 | **Fail-closed confirmations** | `confirm_yes` / `confirm_phrase` | Non-interactive without `--yes`/`--force` = *no*, never *yes*. |
 | **Post-apply repair** | `apt` post-invoke hook | Re-asserts the nft iptables backend after every apt operation, so upgrades cannot silently break the firewall. |
+| **Memory-cgroup fix** | `cgroup-fix.sh` (applied by stage 1 / `repair.sh`) | The Raspberry Pi device tree passes `cgroup_disable=memory`, which silently disables container memory limits. Applied to `cmdline.txt` idempotently, with a backup; activated by the next reboot. |
 
 ---
 

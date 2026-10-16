@@ -95,7 +95,27 @@ else
   step "tailscaled ordering ok (or tailscale absent)"
 fi
 
-# ---- 6. guards -------------------------------------------------------------
+# ---- 6. memory cgroup controller (Pi device tree disables it) --------------
+if grep -qw memory /sys/fs/cgroup/cgroup.controllers 2>/dev/null; then
+  step "memory cgroup controller active"
+else
+  if [ "$CHECK" = 1 ]; then
+    warn "memory cgroup controller missing — run cgroup-fix.sh, then reboot"
+  else
+    if "$HERE/cgroup-fix.sh" >/dev/null 2>&1; then
+      note "memory cgroup already active"
+    else
+      rc=$?
+      if [ "$rc" = 10 ]; then
+        note "applied the memory-cgroup kernel cmdline fix (REBOOT REQUIRED to activate)"
+      else
+        warn "cgroup-fix.sh failed (rc=$rc)"
+      fi
+    fi
+  fi
+fi
+
+# ---- 7. guards -------------------------------------------------------------
 [ -f /etc/systemd/system/net-guard.service ] && [ "$CHECK" = 0 ] && systemctl disable net-guard.service >/dev/null 2>&1 && step "boot guard disabled (setup complete)"
 
 if [ "$changed" -eq 0 ]; then ok "nothing needed repairing"; else ok "$changed item(s) repaired"; fi
@@ -105,6 +125,7 @@ if [ "$CHECK" = 0 ] && pve_installed; then
   gate_triple "repair" \
     "iptables uses the nft backend::iptables -V | grep -q nf_tables" \
     "pve-firewall reports no errors::[ \"\$(journalctl -u pve-firewall -b --no-pager 2>/dev/null | grep -ci error)\" = 0 ]" \
-    "core PVE services active::systemctl is-active --quiet pve-cluster pvedaemon pveproxy pvestatd"
+    "core PVE services active::systemctl is-active --quiet pve-cluster pvedaemon pveproxy pvestatd" \
+    "memory cgroups active or queued::grep -qw memory /sys/fs/cgroup/cgroup.controllers 2>/dev/null || grep -qw cgroup_enable=memory /boot/firmware/cmdline.txt 2>/dev/null"
 fi
 exit 0

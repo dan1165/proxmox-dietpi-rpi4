@@ -173,6 +173,63 @@ lxc-ls -f 2>/dev/null
 - **Unprivileged create fails** → ensure `root:100000:65536` is in `/etc/subuid`
   and `/etc/subgid`.
 
+### Containers ignore their memory limit (the Pi-specific one)
+
+Symptom: a container configured for 2 GB reports the **host's** RAM inside, and
+the host's cgroup shows no effective limit.
+
+```console
+$ pct exec 100 -- free -h
+Mem:           7.7Gi       1.4Gi       ...      # host RAM, not 2 GiB
+$ cat /sys/fs/cgroup/cgroup.controllers
+cpuset cpu io pids                               # <- no "memory"
+```
+
+Cause: the Raspberry Pi **device tree** (`bcm2711-rpi-4-b.dtb` →
+`/chosen/bootargs`) passes `cgroup_disable=memory`, and the firmware prepends it
+to `cmdline.txt`. That is why the token appears in `/proc/cmdline` and `dmesg`
+but in **no file under `/boot`**.
+
+```console
+$ dmesg | grep -i cgroup
+cgroup: Disabling memory control group subsystem
+```
+
+Fix (idempotent, backs up `cmdline.txt`, needs a reboot):
+
+```bash
+sudo ./cgroup-fix.sh          # exit 10 = applied, reboot required
+sudo ./cgroup-fix.sh --check  # report only
+sudo ./cgroup-fix.sh --revert # remove the tokens
+```
+
+After rebooting, `dmesg` shows the controller being re-enabled and the limits
+become real:
+
+```console
+$ dmesg | grep -i cgroup
+cgroup: Enabling memory control group subsystem
+$ cat /sys/fs/cgroup/cgroup.controllers
+cpuset cpu io memory pids
+$ cat /sys/fs/cgroup/lxc/100/memory.max        # the PAYLOAD cgroup
+2147483648
+$ pct exec 100 -- free -h
+Mem:           2.0Gi       ...
+```
+
+> **Gotcha when checking:** the systemd scope `pve-container@100.service` holds
+> only the *monitor* process and reports `memory.max = max`. The enforced limit
+> lives in `/sys/fs/cgroup/lxc/<vmid>/memory.max`. Looking in the wrong place
+> makes it seem like nothing is enforced.
+
+Also confirm what PVE generated:
+
+```bash
+grep -E 'cgroup2|memory' /var/lib/lxc/100/config
+# lxc.cgroup2.memory.max = 2147483648
+# lxc.cgroup2.memory.high = 2130706432
+```
+
 ---
 
 ## 7. Re-applying fixes after an upgrade

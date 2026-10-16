@@ -3,6 +3,38 @@
 All notable changes to this guide/tooling are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.0] — 2026-10-16
+
+### Fixed
+- **Container memory limits were silently unenforced on Raspberry Pi.** The Pi
+  device tree (`bcm2711-rpi-4-b.dtb` → `/chosen/bootargs`) passes
+  `cgroup_disable=memory`, which the firmware prepends to `cmdline.txt`. The
+  result is that `/sys/fs/cgroup/cgroup.controllers` has **no `memory`**, so an
+  LXC configured for e.g. 2 GB uses more and `free` inside reports the host's
+  RAM — while Proxmox still shows `memory: 2048`. The token appears in
+  `/proc/cmdline`/`dmesg` but in **no file under `/boot`**, which is why it is
+  so hard to track down.
+  Fix: append `cgroup_no_v1=all cgroup_enable=memory` to `cmdline.txt`
+  (`cgroup_enable=memory` re-enables the controller the device tree disabled),
+  then reboot.
+
+### Added
+- **`scripts/cgroup-fix.sh`** — idempotently enables the memory cgroup
+  controller. `--check` reports only, `--revert` removes the tokens, backs up
+  `cmdline.txt`, and exits `10` to signal "applied, reboot required".
+- Stage 1 (`01-prepare.sh`) applies the fix automatically, so the stage-2
+  reboot activates it — the correct place, since a reboot is unavoidable there.
+  Its triple verification now checks memory cgroups are active *or* queued.
+- `repair.sh` re-applies it; `preflight.sh` warns when the memory controller is
+  missing; `04-verify.sh` fails verification when it is missing;
+  `status.sh` reports it under Health.
+- README: new **thing #6 — "The Raspberry Pi device tree disables the memory
+  cgroup"** (the list is now "The six things that will break"), plus a 3.1
+  walkthrough step and `cgroup-fix.sh` in the layout.
+- `docs/troubleshooting.md`: "Containers ignore their memory limit" — symptom,
+  root cause, fix, and the `lxc/<vmid>` vs systemd-scope gotcha.
+- `docs/safety.md`: the new preflight warning and the reliability-table entry.
+
 ## [1.2.0] — 2026-10-16
 
 ### Added
