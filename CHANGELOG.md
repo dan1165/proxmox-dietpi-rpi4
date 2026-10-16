@@ -3,6 +3,60 @@
 All notable changes to this guide/tooling are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.0] — 2026-10-16
+
+Safety, UX and reliability release. Nothing about the install procedure changed;
+this adds guardrails around it. Verified live on the reference Pi (preflight,
+status, menu rendering, triple verification, and gate-abort behaviour).
+
+### Added
+- **Interactive TUI menu** (`scripts/menu.sh`) — arrow-key/`k`/`j`/number
+  navigation, live status header, and a graceful numbered fallback on a non-TTY.
+  Also supports `--action <name>` for scripting.
+- **`scripts/preflight.sh` — Gate 1**: ~32 automated, read-only safety checks
+  (arch/OS, wired NIC + carrier, gateway/internet/DNS/mirror reachability,
+  disk/RAM/CPU, recovery-method confirmation, conflicting network managers,
+  cloud-init, existing bridge and drop-ins, `/etc/hosts` correctness, the
+  "no legacy `ip_tables` module" reality check, running guests, and more).
+  `--quiet` for use as a gate, `--strict` to fail on warnings.
+- **Three-gate apply protocol** (`lib/common.sh`): Gate 1 preflight → Gate 2
+  exact-phrase confirmation (`PREPARE`, `APPLY-NETWORK`, `INSTALL-PROXMOX`,
+  `RESTORE-NETWORK`, `PURGE-PROXMOX`) → Gate 3 **triple verification**.
+- **Triple verification** — every applied change is checked by three independent
+  methods (A: systemd state, B: raw processes/ports/HTTP, C: PVE API + on-disk
+  data). `04-verify.sh` now runs all three (plus `--once`, `--smoke`).
+- **`scripts/repair.sh`** — re-applies every known fix idempotently, with
+  `--check` for a dry run and a triple verification at the end.
+- **`scripts/rollback.sh`** — triple-confirmed revert (yes/no → typed phrase →
+  abortable countdown), with `--list`.
+- **`scripts/status.sh`** — read-only overview of host, network, Proxmox,
+  Tailscale and install state; `--brief` for the menu header.
+- **`scripts/tailscale.sh`** — install + configure the Tailscale subnet router
+  (forwarding, UDP tuning, boot ordering, route advertisement, approval hint).
+- **`docs/safety.md`** — the safety model, every check, the reliability
+  features, non-interactive usage and the recovery ladder.
+- Boot-ordering drop-in for `tailscaled` (ordered after `networking.service`,
+  removing 13 spurious `bootstrapDNS` boot errors).
+
+### Changed
+- All stage scripts now: share `lib/common.sh`, log to `$WORKDIR/*.log`, acquire
+  a run lock (`flock`), install an `ERR` trap, write configs atomically, keep
+  timestamped backups, and **verify themselves** before/after applying.
+- Stages are now fully **idempotent** — re-running detects completed work.
+- `02-network.sh` proves the config parses **and the rollback guard is armed**
+  before it will reboot.
+- Confirmations now **fail closed**: non-interactive without `--yes`/`--force`
+  means *no*, never *yes*.
+- `install.sh` became a resumable, gated driver with `--status`, `--reset`,
+  `--yes`, `--force`.
+
+### Fixed
+- Duplicate output in the logging helpers (lines were printed twice).
+- `status.sh` showed the OS codename twice, and `net-guard: disabled` followed by
+  a spurious `n/a`.
+- `04-verify.sh` false-failed the web-UI title check — the ARM fork serves
+  `<title>… Pxvirt</title>`, not "Proxmox".
+
 ## [1.0.0] — 2026-10-16
 
 Initial release. Validated end-to-end on real hardware:

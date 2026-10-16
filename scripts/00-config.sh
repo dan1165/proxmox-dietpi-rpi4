@@ -25,8 +25,15 @@
 # Name of the Proxmox bridge to create.
 : "${BRIDGE:=vmbr0}"
 
+# LAN subnet to advertise if you use the Tailscale subnet-router helper.
+: "${PI_SUBNET:=192.168.0.0/24}"
+
 # Where this tooling keeps backups, logs and helper scripts on the Pi.
 : "${WORKDIR:=/root/proxmox-setup}"
+
+# Safety: 1 = require the three-gate apply protocol (preflight + typed
+# confirmation + triple verification). Do not disable unless you mean it.
+: "${REQUIRE_TRIPLE:=1}"
 
 # Proxmox packages to install.
 : "${PVE_PACKAGES:=proxmox-ve postfix open-iscsi pve-edk2-firmware-aarch64}"

@@ -18,6 +18,9 @@
 - [Requirements](#requirements)
 - [The five things that will break](#the-five-things-that-will-break)
 - [Quick start](#quick-start)
+- [Interactive menu (TUI)](#interactive-menu-tui)
+- [Safety model — at a glance](#safety-model--at-a-glance)
+- [Repository layout](#repository-layout)
 - [Detailed walkthrough](#detailed-walkthrough)
   - [Step 0 — Prep the Pi](#step-0--prep-the-pi)
   - [Step 1 — Add the PXVirt ARM64 repository](#step-1--add-the-pxvirt-arm64-repository)
@@ -175,7 +178,10 @@ DietPi configures the NIC through a drop‑in (`/etc/network/interfaces.d/eth0.c
 
 ## Quick start
 
-If you trust the scripts and want the fast path (still read [The five things that will break](#the-five-things-that-will-break) first):
+> [!NOTE]
+> Every stage enforces a **three-gate apply protocol** (preflight → typed
+> confirmation → triple verification). Nothing changes without it. See
+> [`docs/safety.md`](docs/safety.md).
 
 ```bash
 git clone https://github.com/dan1165/proxmox-dietpi-rpi4.git
@@ -184,11 +190,128 @@ cd proxmox-dietpi-rpi4/scripts
 # 1. Review and edit your network details
 $EDITOR 00-config.sh
 
-# 2. Run the installer (it drives all stages; reconnect after the reboot)
-sudo ./install.sh
+# 2. Interactive menu (recommended)
+sudo ./menu.sh
+
+#   … or drive it directly:
+sudo ./install.sh          # runs the next stage; re-run after the reboot
 ```
 
 The rest of this document explains and reproduces every step manually, so you can do it by hand or debug the script.
+
+---
+
+## Interactive menu (TUI)
+
+```console
+$ sudo ./menu.sh
+
+  proxmox-dietpi-rpi4  v1.1.0
+  ────────────────────────────────────────────────────────────
+  host    DietPi   192.168.0.15
+  net     eth0 → vmbr0   up (192.168.0.15)
+  proxmox installed 9.0.10-2
+  tailsc. present (Running)
+  stage   4 of 4 (inferred)
+  ────────────────────────────────────────────────────────────
+
+  ▸ Install / finish setup (guided)
+    Preflight safety checks (read-only)
+    Verify installation (3× independent)
+    Show status (read-only)
+    Repair known issues
+    Tailscale subnet router
+    Rollback / uninstall
+    Help
+    Quit
+
+  ↑/↓ or k/j move · Enter select · 1-9 jump · q quit
+```
+
+| Menu item | Runs | Changes anything? |
+|---|---|---|
+| Install / finish setup | `install.sh` (gated stages 1–4) | yes, after the gates |
+| Preflight safety checks | `preflight.sh` | **no** — read-only |
+| Verify installation | `04-verify.sh` (3 independent passes) | **no** (except `--smoke`) |
+| Show status | `status.sh` | **no** — read-only |
+| Repair known issues | `repair.sh` (idempotent) | yes |
+| Tailscale subnet router | `tailscale.sh` | yes |
+| Rollback / uninstall | `rollback.sh` (triple-confirmed) | yes |
+| Help | inline help | no |
+
+Non-interactive equivalents:
+
+```bash
+sudo ./menu.sh --action status
+sudo ./menu.sh --action verify
+sudo ./menu.sh --action preflight
+sudo ./preflight.sh --strict       # warnings become failures
+sudo ./repair.sh --check           # report only, change nothing
+sudo ./rollback.sh --list          # show what rollback would restore
+```
+
+On a non-TTY (CI, piped) the menu degrades gracefully to a numbered prompt.
+
+---
+
+## Safety model — at a glance
+
+**Gate 1 · preflight** — automated, read-only checks: arch/OS, wired NIC, gateway
++ internet + DNS + mirror reachability, disk/RAM, recovery-method confirmation,
+conflicting network managers, existing bridge/drop-ins, `/etc/hosts` correctness,
+and the "no legacy `ip_tables`" reality check. Blockers abort; warnings must be
+acknowledged.
+
+**Gate 2 · confirmation** — you type an exact phrase per stage
+(`PREPARE`, `APPLY-NETWORK`, `INSTALL-PROXMOX`, `RESTORE-NETWORK`,
+`PURGE-PROXMOX`). Stage 2 also runs an abortable countdown before rebooting.
+
+**Gate 3 · triple verification** — every applied change is checked three
+independent ways: **A** systemd state, **B** raw processes/ports/HTTP,
+**C** the PVE API and on-disk data. Any failure aborts the run.
+
+Reliability extras: an flock run-lock, an `ERR` trap that prints the failing line
+plus the last 20 log lines, atomic config writes (`tmp` + `mv`), timestamped
+backups, idempotent stages, resumable state across the reboot, fail-closed
+confirmations (non-interactive = *no*), a boot-time **rollback guard** that can
+lock you out of nothing, and an `apt` hook that re-asserts the nft backend so
+upgrades can't silently break the firewall.
+
+📖 Full detail: [`docs/safety.md`](docs/safety.md).
+
+---
+
+## Repository layout
+
+```
+proxmox-dietpi-rpi4/
+├── README.md                     this guide
+├── CHANGELOG.md
+├── LICENSE                       MIT
+├── docs/
+│   ├── safety.md                 the three-gate protocol, checks, recovery ladder
+│   └── troubleshooting.md        deep diagnostics + locked-out-Pi recovery
+└── scripts/
+    ├── 00-config.sh              ★ edit this first (IP, gateway, NIC, bridge, subnet)
+    ├── menu.sh                   interactive TUI
+    ├── install.sh                guided, resumable driver (stages 1–4)
+    ├── preflight.sh              gate 1 — read-only safety checks
+    ├── 01-prepare.sh             gate 2+3 — repo, backups, hosts, ifupdown2
+    ├── 02-network.sh             gate 2+3 — bridge + rollback guard + reboot
+    ├── 03-install-proxmox.sh     gate 2+3 — install + compat fixes + templates
+    ├── 04-verify.sh              gate 3 — three independent verification passes
+    ├── repair.sh                 re-apply every known fix, idempotently
+    ├── rollback.sh               triple-confirmed revert / uninstall
+    ├── status.sh                 read-only overview (host/net/Proxmox/Tailscale)
+    ├── tailscale.sh              install + configure the subnet router
+    ├── pve-pi-fix.sh             force the nft iptables backend
+    ├── net-guard.sh              boot-time network rollback guard
+    ├── net-failsafe.sh           guards the ifupdown→ifupdown2 swap
+    ├── patch-aplinfo.py          drop the unverifiable template mirror
+    └── lib/common.sh             logging, gates, confirmations, TUI primitives
+```
+
+Every script is `bash -n`-clean and safe to read before you run it.
 
 ---
 
@@ -812,7 +935,8 @@ Correct — and intentional. DietPi writes to `/etc/network/interfaces.d/`, whic
 
 > For deeper diagnostics — recovering a locked‑out headless Pi, where every log
 > lives, bridge/LXC debugging, and re‑applying fixes after upgrades — see
-> [`docs/troubleshooting.md`](docs/troubleshooting.md).
+> [`docs/troubleshooting.md`](docs/troubleshooting.md). For how the safety gates
+> work and the full recovery ladder, see [`docs/safety.md`](docs/safety.md).
 
 ---
 

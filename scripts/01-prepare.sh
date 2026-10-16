@@ -1,93 +1,128 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
-# 01-prepare.sh — Stage 1
+# 01-prepare.sh — Stage 1 (idempotent, gated)
 #
-#  * sanity checks (arch, OS codename, wired NIC)
-#  * add the PXVirt ARM64 Proxmox repository
-#  * back up everything we are about to touch
-#  * point the hostname at the real IP in /etc/hosts
-#  * arm a short-lived fail-safe
-#  * replace ifupdown with ifupdown2 (+ bridge-utils)
+#  * preflight safety checks          (gate 1)
+#  * typed confirmation               (gate 2)
+#  * PXVirt ARM64 repo, backups, /etc/hosts, ifupdown2, fail-safe
+#  * triple verification of the result (gate 3)
 #
-# Safe to re-run (idempotent).
+# Safe to re-run: every step detects work already done.
 # ---------------------------------------------------------------------------
-set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+. "$HERE/lib/common.sh"
 # shellcheck source=00-config.sh
 . "$HERE/00-config.sh"
 
-say() { printf '\n==> %s\n' "$*"; }
-die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+WORKDIR="${WORKDIR:-/root/proxmox-setup}"
+mkdir -p "$WORKDIR"
+LOG_FILE="$WORKDIR/01-prepare.log"
+install_error_trap "01-prepare"
+require_root
+require_tty_or_yes
+acquire_lock
 
-[ "$(id -u)" -eq 0 ] || die "run as root (sudo $0)"
+# ---- gate 1 ---------------------------------------------------------------
+gate_preflight "$HERE" || exit 1
 
-say "Sanity checks"
-CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
-ARCH=$(dpkg --print-architecture)
-echo "  OS codename : $CODENAME"
-echo "  architecture: $ARCH"
-[ "$ARCH" = "arm64" ] || die "this guide requires a 64-bit (arm64) system; got $ARCH"
-[ -d "/sys/class/net/$NIC" ] || die "interface '$NIC' not found (see: ip -br link)"
-case "$NIC" in
-  wl*|wlan*) die "interface '$NIC' looks wireless — bridging Wi-Fi is not supported, use Ethernet" ;;
-esac
-echo "  NIC         : $NIC (wired, OK)"
-echo "  bridge      : $BRIDGE"
-echo "  address     : $PI_IP/$PI_CIDR via $PI_GATEWAY"
+# ---- gate 2 ---------------------------------------------------------------
+cat <<EOF
 
-mkdir -p "$WORKDIR" "$WORKDIR/backup" "$WORKDIR/disabled"
+  Stage 1 will:
+    • add the PXVirt ARM64 Proxmox repository
+    • back up /etc/network/interfaces, /etc/hosts, /etc/resolv.conf, apt sources
+    • point $(hostname) at $PI_IP in /etc/hosts
+    • replace ifupdown with ifupdown2 (+ bridge-utils)
+EOF
+gate_confirm "PREPARE" "Type PREPARE to apply stage 1" || exit 1
 
+CHANGED=0
+note() { CHANGED=$((CHANGED+1)); step "$*"; }
+
+# ---- backups (only once; keep the original) --------------------------------
 say "Backups"
-cp -a /etc/network/interfaces   "$WORKDIR/backup/interfaces"   2>/dev/null || true
-rm -rf "$WORKDIR/backup/interfaces.d"
-cp -a /etc/network/interfaces.d "$WORKDIR/backup/interfaces.d" 2>/dev/null || true
-cp -a /etc/hosts                "$WORKDIR/backup/hosts"
-cp -a /etc/resolv.conf          "$WORKDIR/backup/resolv.conf"  2>/dev/null || true
-cp -a /etc/apt/sources.list.d   "$WORKDIR/backup/sources.list.d" 2>/dev/null || true
-ls -laR "$WORKDIR/backup"
+BK="$WORKDIR/backup"
+mkdir -p "$BK" "$WORKDIR/disabled"
+if [ -f "$BK/interfaces" ]; then
+  step "backups already present (preserving the original set)"
+else
+  cp -a /etc/network/interfaces   "$BK/interfaces" 2>/dev/null || true
+  rm -rf "$BK/interfaces.d"
+  cp -a /etc/network/interfaces.d "$BK/interfaces.d" 2>/dev/null || true
+  cp -a /etc/hosts                "$BK/hosts"
+  cp -a /etc/resolv.conf          "$BK/resolv.conf" 2>/dev/null || true
+  cp -a /etc/apt/sources.list.d   "$BK/sources.list.d" 2>/dev/null || true
+  note "backed up network/hosts/resolv/apt-sources to $BK"
+fi
 
-say "Base packages"
-export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y curl
+# ---- repository ------------------------------------------------------------
+say "PXVirt ARM64 repository"
+CODENAME=$(os_codename)
+if [ -s /usr/share/keyrings/lierfang.gpg ] && grep -q mirror.lierfang.com /etc/apt/sources.list.d/pveport.list 2>/dev/null; then
+  step "repository and key already present"
+else
+  have curl || { DEBIAN_FRONTEND=noninteractive apt-get install -y curl; }
+  curl -fsSL https://mirrors.lierfang.com/pxcloud/lierfang.gpg -o /usr/share/keyrings/lierfang.gpg
+  atomic_write /etc/apt/sources.list.d/pveport.list <<EOF
+deb [arch=arm64 signed-by=/usr/share/keyrings/lierfang.gpg] https://mirrors.lierfang.com/pxcloud/pxvirt $CODENAME main
+EOF
+  note "added PXVirt repo for $CODENAME"
+fi
 
-say "Add PXVirt ARM64 repository"
-curl -fsSL https://mirrors.lierfang.com/pxcloud/lierfang.gpg -o /usr/share/keyrings/lierfang.gpg
-echo "deb [arch=arm64 signed-by=/usr/share/keyrings/lierfang.gpg] https://mirrors.lierfang.com/pxcloud/pxvirt $CODENAME main" \
-  > /etc/apt/sources.list.d/pveport.list
-cat /etc/apt/sources.list.d/pveport.list
-apt-get update
-apt-cache policy proxmox-ve | sed -n '1,3p'
+say "Refreshing package lists"
+apt-get update -qq 2>&1 | tail -3 || warn "apt update reported issues"
+POLICY=$(apt-cache policy proxmox-ve 2>/dev/null | awk '/Candidate/{print $2}')
+[ -n "$POLICY" ] && [ "$POLICY" != "(none)" ] && ok "proxmox-ve candidate: $POLICY" || warn "proxmox-ve not visible in apt yet"
 
-say "Fix /etc/hosts (hostname -> real IP)"
-cat > /etc/hosts <<EOF
+# ---- hosts -----------------------------------------------------------------
+say "/etc/hosts"
+if grep -qE "^$PI_IP[[:space:]]+$(hostname)\b" /etc/hosts 2>/dev/null; then
+  step "hostname already maps to $PI_IP"
+else
+  atomic_write /etc/hosts <<EOF
 127.0.0.1       localhost
-$PI_IP      $PI_HOSTNAME
+$PI_IP      $(hostname)
 
 # The following lines are desirable for IPv6 capable hosts
 ::1     localhost ip6-localhost ip6-loopback
 ff02::1 ip6-allnodes
 ff02::2 ip6-allrouters
 EOF
-cat /etc/hosts
-echo "  hostname --ip-address -> $(hostname --ip-address)"
+  note "/etc/hosts -> $PI_IP $(hostname)"
+fi
 
-say "Arm fail-safe (guards the ifupdown -> ifupdown2 swap)"
+# ---- fail-safe -------------------------------------------------------------
+say "Arming fail-safe (guards the ifupdown → ifupdown2 swap)"
 sed "s|__GATEWAY__|$PI_GATEWAY|g" "$HERE/net-failsafe.sh" > "$WORKDIR/net-failsafe.sh"
 install -m 755 "$WORKDIR/net-failsafe.sh" /usr/local/sbin/net-failsafe.sh
 rm -f /var/lib/.net-failsafe-ran
 setsid nohup /usr/local/sbin/net-failsafe.sh >/dev/null 2>&1 &
-echo "  fail-safe armed (pid $!)"
+step "fail-safe armed (pid $!)"
 
-say "Install ifupdown2 + bridge-utils"
-rm -f /tmp/.ifupdown2-first-install
-if ! apt-get install -y ifupdown2 bridge-utils; then
-  echo "  first attempt failed; applying the .ifupdown2-first-install workaround"
+# ---- ifupdown2 -------------------------------------------------------------
+say "ifupdown2 + bridge-utils"
+if dpkg -s ifupdown2 >/dev/null 2>&1; then
+  step "ifupdown2 already installed"
+else
   rm -f /tmp/.ifupdown2-first-install
-  dpkg --configure -a
-  apt-get install -y ifupdown2 bridge-utils
+  if ! DEBIAN_FRONTEND=noninteractive apt-get install -y ifupdown2 bridge-utils; then
+    warn "first attempt failed; applying the .ifupdown2-first-install workaround"
+    rm -f /tmp/.ifupdown2-first-install
+    dpkg --configure -a || true
+    DEBIAN_FRONTEND=noninteractive apt-get install -y ifupdown2 bridge-utils
+  fi
+  note "installed ifupdown2 + bridge-utils (ifupdown removed)"
 fi
-dpkg -l ifupdown ifupdown2 2>&1 | grep -E '^ii|^un' || true
-command -v ifup && ifup --version 2>&1 | head -2
 
-printf '\n==> Stage 1 complete. Next: sudo %s/02-network.sh\n' "$HERE"
+# ---- gate 3 ----------------------------------------------------------------
+gate_triple "stage 1" \
+  "PXVirt key installed::test -s /usr/share/keyrings/lierfang.gpg" \
+  "pveport.list present and uses the right codename::grep -q \"$CODENAME\" /etc/apt/sources.list.d/pveport.list" \
+  "hostname resolves to $PI_IP::grep -qE \"^$PI_IP[[:space:]]+$(hostname)\\\\b\" /etc/hosts && [ \"\$(hostname --ip-address)\" = \"$PI_IP\" ]" \
+  "ifupdown2 installed::dpkg -s ifupdown2 >/dev/null 2>&1" \
+  "ifup command works::command -v ifup >/dev/null" \
+  "original interfaces backed up::test -f $WORKDIR/backup/interfaces"
+
+state_set 2
+printf '\n%sStage 1 complete%s (%d change(s)). Next: sudo %s/02-network.sh\n' "$C_BOLD$C_GREEN" "$C_RESET" "$CHANGED" "$HERE"
