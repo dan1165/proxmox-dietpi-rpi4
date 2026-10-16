@@ -1,0 +1,20 @@
+# Logs / state produced by the scripts on the Pi
+*.log
+.stage
+
+# Editor / OS cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Never commit secrets
+.env
+*.pem
+*.key
+
+# Python build artifacts
+__pycache__/
+*.pyc
