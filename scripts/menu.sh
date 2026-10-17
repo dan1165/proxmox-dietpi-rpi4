@@ -36,17 +36,48 @@ pause() {
 
 run_action() {
   case "$1" in
+    auto)      "$HERE/autoinstall.sh" ;;
     install)   "$HERE/install.sh" ;;
     preflight) "$HERE/preflight.sh" ;;
     verify)    "$HERE/04-verify.sh" --triple ;;
     config)    "$HERE/config.sh" ;;
     status)    "$HERE/status.sh" ;;
+    heal)      heal_menu ;;
     repair)    "$HERE/repair.sh" ;;
     tailscale) "$HERE/tailscale.sh" ;;
     rollback)  "$HERE/rollback.sh" ;;
     help)      show_help ;;
     *)         err "unknown action: $1"; return 1 ;;
   esac
+}
+
+# Repair / auto-heal submenu
+heal_menu() {
+  local timer
+  timer=$(systemctl is-enabled pve-pi-heal.timer 2>/dev/null || echo "not installed")
+  while :; do
+    header=$(printf '  %sRepair / auto-heal%s\n  %sauto-heal timer: %s%s\n' \
+      "$C_BOLD$C_CYAN" "$C_RESET" "$C_DIM" "$timer" "$C_RESET")
+    if tui_menu "$header" \
+        "Heal now (apply every fix — safe, idempotent)" \
+        "Check only (change nothing)" \
+        "Install the auto-heal timer (boot + hourly)" \
+        "Remove the auto-heal timer" \
+        "Back"; then
+      case "$TUI_CHOICE" in
+        1) "$HERE/heal.sh" ;;
+        2) "$HERE/heal.sh" --check ;;
+        3) "$HERE/heal.sh" --install-timer ;;
+        4) "$HERE/heal.sh" --uninstall-timer ;;
+        5) return 0 ;;
+      esac
+      timer=$(systemctl is-enabled pve-pi-heal.timer 2>/dev/null || echo "not installed")
+      pause
+      [ -t 0 ] && clear 2>/dev/null || true
+    else
+      return 0
+    fi
+  done
 }
 
 show_help() {
@@ -60,23 +91,26 @@ ${C_BOLD}proxmox-dietpi-rpi4 — help${C_RESET}
     Gate 3  verify      every applied change is verified by 3 independent checks
 
   ${C_BOLD}Menu actions${C_RESET}
-    1 install      guided install / resume (gated; re-run after the reboot)
-    2 preflight    read-only safety checks; nothing is modified
-    3 verify       full verification, 3 independent passes
-    4 config       view / edit configuration (writes 00-config.local.sh)
-    5 status       read-only overview (host, net, Proxmox, Tailscale)
-    6 repair       re-apply all known fixes idempotently
+    1 auto         unattended install; survives the reboot, then installs the
+                   hourly auto-heal timer
+    2 install      guided install / resume (gated; re-run after the reboot)
+    3 preflight    read-only safety checks; nothing is modified
+    4 verify       full verification, 3 independent passes
+    5 config       view / edit configuration (writes 00-config.local.sh)
+    6 heal         repair / auto-heal (now, check, add/remove the timer)
     7 tailscale    install/configure the Tailscale subnet router
     8 rollback     triple-confirmed revert (optionally purge Proxmox)
     9 help         this text            ·  q quits
 
   ${C_BOLD}Non-interactive${C_RESET}
+    sudo ./autoinstall.sh                   # fully unattended, reboots once
+    sudo ./autoinstall.sh --status           # progress
+    sudo ./heal.sh                           # heal now
+    sudo ./heal.sh --check                   # report only
+    sudo ./heal.sh --install-timer           # hourly self-heal
     sudo ./menu.sh --action verify
-    sudo ./config.sh --show                 # effective configuration
-    sudo ./config.sh --set PI_IP=192.168.0.20
-    sudo ./config.sh --detect               # fill from this system
-    sudo ./install.sh                       # resumable stages 1-4
-    sudo ./install.sh --smoke               # stage 4 with a live LXC smoke test
+    sudo ./config.sh --show                  # effective configuration
+    sudo ./install.sh                        # gated stages 1-4
 
   ${C_BOLD}Keys${C_RESET}   ↑/↓ or k/j move · Enter select · 1-9 jump · q quit
 
@@ -98,22 +132,22 @@ while :; do
   header="$header
   ${C_DIM}docs: README.md · docs/safety.md${C_RESET}"
   if tui_menu "$header" \
+      "Auto install (unattended, survives reboot)" \
       "Install / finish setup (guided)" \
       "Preflight safety checks (read-only)" \
       "Verify installation (3× independent)" \
       "Edit configuration" \
-      "Show status (read-only)" \
-      "Repair known issues" \
+      "Repair / auto-heal" \
       "Tailscale subnet router" \
       "Rollback / uninstall" \
       "Help"; then
     case "$TUI_CHOICE" in
-      1) run_action install ;;
-      2) run_action preflight ;;
-      3) run_action verify ;;
-      4) run_action config ;;
-      5) run_action status ;;
-      6) run_action repair ;;
+      1) run_action auto ;;
+      2) run_action install ;;
+      3) run_action preflight ;;
+      4) run_action verify ;;
+      5) run_action config ;;
+      6) run_action heal ;;
       7) run_action tailscale ;;
       8) run_action rollback ;;
       9) run_action help ;;

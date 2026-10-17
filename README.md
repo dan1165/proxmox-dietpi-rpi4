@@ -13,12 +13,14 @@
 ## Table of contents
 
 - [What this is](#what-this-is)
+- [Documentation](#documentation)
 - [Why not just use Raspberry Pi OS Lite?](#why-not-just-use-raspberry-pi-os-lite)
 - [What you get](#what-you-get)
 - [Requirements](#requirements)
 - [The six things that will break](#the-six-things-that-will-break)
 - [Quick start](#quick-start)
 - [Interactive menu (TUI)](#interactive-menu-tui)
+- [Automation & self-healing](#automation--self-healing)
 - [Configuration](#configuration)
 - [Safety model — at a glance](#safety-model--at-a-glance)
 - [Repository layout](#repository-layout)
@@ -56,6 +58,26 @@ This guide installs **Proxmox VE 9** on a **Raspberry Pi 4B (8 GB)** running **D
 Everything here was run end‑to‑end on real hardware, rebooted three times to confirm persistence, and verified by booting an actual LXC container that pulled a DHCP lease through the new bridge.
 
 **Result:** `https://<pi-ip>:8006` serves the Proxmox web UI, LXC containers and arm64 VMs work, and the host survives `apt upgrade` without re‑breaking.
+
+---
+
+## Documentation
+
+| Where to start | For |
+|---|---|
+| **[docs/quickstart.md](docs/quickstart.md)** | **Plain‑English tutorial** — what to type, what you'll see, how to know it worked. No jargon. |
+| **[docs/glossary.md](docs/glossary.md)** | Every term (bridge, container, cgroup, subnet route…) in one line. |
+| **[docs/safety.md](docs/safety.md)** | The three‑gate safety model, every preflight check, the recovery ladder. |
+| **[docs/troubleshooting.md](docs/troubleshooting.md)** | Deep diagnostics, including recovering a Pi you cannot reach. |
+| **This file** | The full technical walkthrough: every step, why each fix is needed, expected output. |
+
+**In a hurry?** Three commands:
+
+```bash
+git clone https://github.com/dan1165/proxmox-dietpi-rpi4.git && cd proxmox-dietpi-rpi4/scripts
+sudo ./config.sh --detect      # point it at your network
+sudo ./autoinstall.sh          # unattended; reboots once; then self-heals forever
+```
 
 ---
 
@@ -214,25 +236,85 @@ Without the fix, that last command prints the host's RAM and `memory.max` reads 
 ## Quick start
 
 > [!NOTE]
-> Every stage enforces a **three-gate apply protocol** (preflight → typed
-> confirmation → triple verification). Nothing changes without it. See
-> [`docs/safety.md`](docs/safety.md).
+> Every stage enforces a **three‑gate apply protocol** (preflight → typed
+> confirmation → triple verification). Nothing changes without it. The
+> unattended installer skips **only** the typed confirmation — preflight and
+> verification still run. See [`docs/safety.md`](docs/safety.md).
+
+Missing tools (`curl`, `python3`, `ethtool`, …) are **detected and installed
+automatically**; there is nothing to install by hand.
+
+**Pick one:**
 
 ```bash
 git clone https://github.com/dan1165/proxmox-dietpi-rpi4.git
 cd proxmox-dietpi-rpi4/scripts
+sudo ./config.sh --detect            # or: sudo ./config.sh  to edit in a menu
+```
 
-# 1. Review and edit your network details
-$EDITOR 00-config.sh
+```bash
+# A) Fully unattended — one command, reboots once, then enables auto-heal
+sudo ./autoinstall.sh
+sudo ./autoinstall.sh --status       # watch progress at any time
+```
 
-# 2. Interactive menu (recommended)
-sudo ./menu.sh
+```bash
+# B) Interactive — arrow-key menu
+sudo ./menu.sh                       # then pick "Auto install" or guided
+```
 
-#   … or drive it directly:
-sudo ./install.sh          # runs the next stage; re-run after the reboot
+```bash
+# C) By hand, gated, one stage at a time
+sudo ./install.sh                    # re-run after the reboot
+```
+
+**Afterwards, at any time:**
+
+```bash
+sudo ./heal.sh --check     # is everything healthy?          (changes nothing)
+sudo ./heal.sh             # fix anything that drifted       (safe, repeatable)
 ```
 
 The rest of this document explains and reproduces every step manually, so you can do it by hand or debug the script.
+
+---
+
+## Automation & self‑healing
+
+| Want | Command |
+|---|---|
+| Dependencies | checked and installed automatically by every stage, `repair.sh` and `heal.sh` |
+| Unattended install (survives the reboot) | `sudo ./autoinstall.sh` |
+| Progress of an unattended install | `sudo ./autoinstall.sh --status` |
+| Stop an unattended install | `sudo ./autoinstall.sh --abort` |
+| Heal now | `sudo ./heal.sh` |
+| Report only | `sudo ./heal.sh --check` |
+| Auto‑heal at boot + hourly | `sudo ./heal.sh --install-timer` |
+| Is the timer on? | `sudo ./heal.sh --timer-status` |
+| Re‑apply fixes (same engine as heal) | `sudo ./repair.sh` |
+
+**How the unattended install survives its reboot.** It snapshots these scripts to
+`/root/proxmox-setup/scripts`, records progress in `/root/proxmox-setup/.stage`,
+and installs a one‑shot systemd unit (`pve-pi-autoinstall.service`) that resumes
+automatically after the reboot. When it finishes it removes that unit and
+installs the auto‑heal timer. A failing stage is retried on the next boot, up to
+`AUTO_MAX_ATTEMPTS` times (default 3), then it stops and tells you where to look.
+
+**What auto‑heal covers**, once at boot and once an hour:
+
+1. nft iptables backend (+ boot unit, apt hook, firewall drop‑in)
+2. memory cgroup controller
+3. `systemd-logind` unmasked
+4. bookworm apt source disabled
+5. `PVE::APLInfo` template mirror patched
+6. `tailscaled` boot ordering
+7. any enabled service that should be running but is not → restarted
+8. the bridge does **not** hold its IP → **reported**, not touched
+
+> Networking is deliberately excluded from automatic repair: a timer that
+> rewrites the network could drop your SSH session. Run
+> `sudo ./heal.sh --with-network` to allow an `ifup` attempt, or
+> [`rollback.sh`](scripts/rollback.sh) if the bridge is genuinely wrong.
 
 ---
 
@@ -241,7 +323,7 @@ The rest of this document explains and reproduces every step manually, so you ca
 ```console
 $ sudo ./menu.sh
 
-  proxmox-dietpi-rpi4  v1.2.0
+  proxmox-dietpi-rpi4  v1.4.0
   ────────────────────────────────────────────────────────────
   host    DietPi   192.168.0.15
   net     eth0 → vmbr0   up (192.168.0.15)
@@ -251,12 +333,12 @@ $ sudo ./menu.sh
   ────────────────────────────────────────────────────────────
   docs: README.md · docs/safety.md
 
-  ▸ Install / finish setup (guided)
+  ▸ Auto install (unattended, survives reboot)
+    Install / finish setup (guided)
     Preflight safety checks (read-only)
     Verify installation (3× independent)
     Edit configuration
-    Show status (read-only)
-    Repair known issues
+    Repair / auto-heal
     Tailscale subnet router
     Rollback / uninstall
     Help
@@ -266,14 +348,14 @@ $ sudo ./menu.sh
 
 | Menu item | Runs | Changes anything? |
 |---|---|---|
+| Auto install | `autoinstall.sh` (unattended, resumes after reboot, then enables auto‑heal) | yes |
 | Install / finish setup | `install.sh` (gated stages 1–4) | yes, after the gates |
-| Preflight safety checks | `preflight.sh` | **no** — read-only |
+| Preflight safety checks | `preflight.sh` | **no** — read‑only |
 | Verify installation | `04-verify.sh` (3 independent passes) | **no** (except `--smoke`) |
-| **Edit configuration** | `config.sh` | writes `00-config.local.sh` |
-| Show status | `status.sh` | **no** — read-only |
-| Repair known issues | `repair.sh` (idempotent) | yes |
+| Edit configuration | `config.sh` | writes `00-config.local.sh` |
+| Repair / auto‑heal | submenu → `heal.sh` / `repair.sh` | yes (heal is safe + idempotent) |
 | Tailscale subnet router | `tailscale.sh` | yes |
-| Rollback / uninstall | `rollback.sh` (triple-confirmed) | yes |
+| Rollback / uninstall | `rollback.sh` (triple‑confirmed) | yes |
 | Help | inline help | no |
 
 Non-interactive equivalents:
@@ -282,8 +364,9 @@ Non-interactive equivalents:
 sudo ./menu.sh --action status
 sudo ./menu.sh --action verify
 sudo ./menu.sh --action preflight
+sudo ./autoinstall.sh --status
 sudo ./preflight.sh --strict       # warnings become failures
-sudo ./repair.sh --check           # report only, change nothing
+sudo ./heal.sh --check             # report only, change nothing
 sudo ./rollback.sh --list          # show what rollback would restore
 ```
 
@@ -386,29 +469,36 @@ proxmox-dietpi-rpi4/
 ├── CHANGELOG.md
 ├── LICENSE                       MIT
 ├── docs/
+│   ├── quickstart.md             plain-English tutorial (start here)
+│   ├── glossary.md               every term in one line
 │   ├── safety.md                 the three-gate protocol, checks, recovery ladder
 │   └── troubleshooting.md        deep diagnostics + locked-out-Pi recovery
 └── scripts/
     ├── 00-config.sh              ★ edit this first (IP, gateway, NIC, bridge, subnet)
     ├── 00-config.local.sh        your overrides — gitignored, created by config.sh
+    ├── autoinstall.sh            unattended install that survives reboots
     ├── menu.sh                   interactive TUI
     ├── config.sh                 view / edit configuration (TUI + CLI, validated)
     ├── install.sh                guided, resumable driver (stages 1–4)
     ├── preflight.sh              gate 1 — read-only safety checks
-    ├── 01-prepare.sh             gate 2+3 — repo, backups, hosts, ifupdown2
+    ├── 01-prepare.sh             gate 2+3 — repo, backups, hosts, dependencies, ifupdown2
     ├── 02-network.sh             gate 2+3 — bridge + rollback guard + reboot
     ├── 03-install-proxmox.sh     gate 2+3 — install + compat fixes + templates
     ├── 04-verify.sh              gate 3 — three independent verification passes
+    ├── heal.sh                   self-heal now / --check / install the auto-heal timer
     ├── repair.sh                 re-apply every known fix, idempotently
     ├── rollback.sh               triple-confirmed revert / uninstall
     ├── status.sh                 read-only overview (host/net/Proxmox/Tailscale)
-    ├── tailscale.sh              install + configure the subnet router
+    ├── tailscale.sh              install + configure the subnet router (--auto supported)
     ├── pve-pi-fix.sh             force the nft iptables backend
     ├── cgroup-fix.sh             enable the memory cgroup controller (the Pi DTB disables it)
     ├── net-guard.sh              boot-time network rollback guard
     ├── net-failsafe.sh           guards the ifupdown→ifupdown2 swap
     ├── patch-aplinfo.py          drop the unverifiable template mirror
-    └── lib/common.sh             logging, gates, confirmations, TUI primitives
+    └── lib/
+        ├── common.sh             logging, gates, confirmations, TUI, locking
+        ├── deps.sh               dependency manifest + auto-install
+        └── fixes.sh              every known fix, as idempotent functions
 ```
 
 Every script is `bash -n`-clean and safe to read before you run it.

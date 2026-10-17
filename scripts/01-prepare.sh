@@ -40,6 +40,11 @@ gate_confirm "PREPARE" "Type PREPARE to apply stage 1" || exit 1
 CHANGED=0
 note() { CHANGED=$((CHANGED+1)); step "$*"; }
 
+# ---- dependencies (auto-install whatever is missing) -----------------------
+say "Required dependencies"
+ensure_deps --quiet || die "could not install the required dependencies (see above)"
+ensure_optional_deps || true
+
 # ---- backups (only once; keep the original) --------------------------------
 say "Backups"
 BK="$WORKDIR/backup"

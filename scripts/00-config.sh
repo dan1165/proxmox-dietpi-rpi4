@@ -35,6 +35,17 @@
 # confirmation + triple verification). Do not disable unless you mean it.
 : "${REQUIRE_TRIPLE:=1}"
 
+# --- unattended install (autoinstall.sh) -----------------------------------
+# Install a systemd timer that re-applies the compatibility fixes hourly.
+: "${AUTO_INSTALL_HEAL_TIMER:=1}"
+# Also set up the Tailscale subnet router during an unattended install.
+: "${AUTO_INSTALL_TAILSCALE:=0}"
+# Auth key for unattended Tailscale (tskey-auth-...). SECRET — keep it in
+# scripts/00-config.local.sh (gitignored), never in this file.
+: "${TAILSCALE_AUTHKEY:=}"
+# How many times a failing stage is retried across reboots before giving up.
+: "${AUTO_MAX_ATTEMPTS:=3}"
+
 # ---------------------------------------------------------------------------
 # Optional local overrides — created by the TUI "Edit configuration" screen.
 # Not tracked by git, so it survives `git pull` and keeps the repo clean.

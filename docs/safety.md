@@ -115,6 +115,9 @@ the reboot.
 | **Fail-closed confirmations** | `confirm_yes` / `confirm_phrase` | Non-interactive without `--yes`/`--force` = *no*, never *yes*. |
 | **Post-apply repair** | `apt` post-invoke hook | Re-asserts the nft iptables backend after every apt operation, so upgrades cannot silently break the firewall. |
 | **Memory-cgroup fix** | `cgroup-fix.sh` (applied by stage 1 / `repair.sh`) | The Raspberry Pi device tree passes `cgroup_disable=memory`, which silently disables container memory limits. Applied to `cmdline.txt` idempotently, with a backup; activated by the next reboot. |
+| **Dependency auto-install** | `lib/deps.sh` (`ensure_deps`) | Detects missing tools (`curl`, `python3`, `ethtool`, …) from a manifest and installs them via apt; `NO_INSTALL_DEPS=1` for check-only runs. |
+| **Unattended install** | `autoinstall.sh` | Drives the gated stages across the reboot using a resume unit and a retry counter; installs the auto-heal timer when done. |
+| **Auto-heal timer** | `heal.sh` + `pve-pi-heal.timer` | Boot + hourly: re-applies all fixes, restarts dead services, logs to `heal.log`. Networking is report-only. |
 
 ---
 
@@ -124,6 +127,7 @@ The gates are designed to be loud, not to be bypassed casually. For CI or
 unattended runs:
 
 ```bash
+sudo ./autoinstall.sh                   # fully unattended, reboots once
 sudo ./install.sh --yes                 # auto-answer yes/no prompts
 sudo ./install.sh --yes --force         # also skip typed phrases (use with care)
 ```
@@ -131,6 +135,25 @@ sudo ./install.sh --yes --force         # also skip typed phrases (use with care
 `--force` skips **only** the typed-phrase gate; preflight (gate 1) and
 verification (gate 3) still run and can still abort the run. There is no flag
 that disables preflight or verification.
+
+### What the unattended installer changes
+
+`autoinstall.sh` exports `ASSUME_YES=1 FORCE=1` and drives the same gated stages,
+so the guarantees are:
+
+| Gate | Under `autoinstall.sh` |
+|---|---|
+| 1 · preflight | **still runs** — a blocker aborts the whole run |
+| 2 · typed confirmation | **skipped** — nobody is there to type it (this is the only relaxation) |
+| 3 · triple verification | **still runs** — a failure retries on the next boot, then stops |
+
+It also **fails safe across reboots**: progress and the retry counter live in
+`/root/proxmox-setup/`, a failing stage is retried up to `AUTO_MAX_ATTEMPTS`
+times (default 3) and then the resume unit is removed so the machine cannot loop
+forever. `sudo ./autoinstall.sh --abort` stops it at any time.
+
+Read the run log at `/root/proxmox-setup/autoinstall.log`; every stage also
+keeps its own log in the same directory.
 
 Read-only commands are always safe to run:
 

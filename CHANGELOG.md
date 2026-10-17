@@ -3,6 +3,70 @@
 All notable changes to this guide/tooling are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.4.0] — 2026-10-17
+
+Automation and self-healing release. Everything is now unattended‑capable, keeps
+itself repaired, and installs whatever it needs.
+
+### Added
+- **`scripts/lib/deps.sh` — dependency manifest + auto-install.** Declares the
+  tools the scripts use (`curl`, `python3`, `iproute2`, `iputils-ping`,
+  `libc-bin`, `util-linux`, `ca-certificates`) and installs anything missing via
+  apt, with a package-list refresh and retry. `ensure_deps` is called by stage 1,
+  stage 3, `repair.sh` and `heal.sh`; `deps_report` feeds preflight and status;
+  `NO_INSTALL_DEPS=1` gives check-only behaviour. Optional extras (`ethtool`,
+  `gnupg`, `bridge-utils`) are installed best-effort by `ensure_optional_deps`.
+- **`scripts/lib/fixes.sh` — every fix as an idempotent function**
+  (`fix_nft_backend`, `fix_cgroup`, `fix_logind`, `fix_apt_source`,
+  `fix_aplinfo`, `fix_tailscale_order`, `fix_services`, `fix_network`). `repair.sh`
+  and the new healer now share ONE implementation; nothing is duplicated.
+- **`scripts/heal.sh` — self-healing.** `--check` reports the state of every fix
+  (read-only); the default applies them all; `--with-network` opts in to an
+  `ifup` attempt; `--install-timer` / `--uninstall-timer` / `--timer-status`
+  manage a systemd timer that heals at boot and hourly. Restarts services that
+  should be running but are not. Quiet runs still leave a trace in
+  `/root/proxmox-setup/heal.log`. Networking is deliberately **not** touched
+  automatically.
+- **`scripts/autoinstall.sh` — fully unattended install that survives the
+  reboot.** Snapshots the scripts to `$WORKDIR/scripts`, drives the normal gated
+  stages in order using `$WORKDIR/.stage`, and installs a one-shot
+  `pve-pi-autoinstall.service` that resumes after the reboot and removes itself
+  when finished. Fails safe: retries a failing stage up to `AUTO_MAX_ATTEMPTS`
+  (default 3) across boots, then stops instead of looping. `--status`, `--abort`,
+  `--clean`, `--foreground`.
+- **Unattended Tailscale.** `tailscale.sh --auto` authenticates with
+  `TAILSCALE_AUTHKEY` (keep it in the gitignored `00-config.local.sh`), and
+  `autoinstall.sh` runs it when `AUTO_INSTALL_TAILSCALE=1`.
+- **New config keys** (editable from the TUI): `AUTO_INSTALL_HEAL_TIMER`,
+  `AUTO_INSTALL_TAILSCALE`, `AUTO_MAX_ATTEMPTS`; plus `TAILSCALE_AUTHKEY`
+  (secret, intentionally not shown by the config editor).
+- **Documentation for humans:**
+  - **`docs/quickstart.md`** — a plain-English tutorial: what to type, what you
+    will see at each stage, how long it takes, how to know it worked, how to make
+    your first container, and how to undo it.
+  - **`docs/glossary.md`** — every term in one line (bridge, container, cgroup,
+    device tree, subnet router, …).
+  - README: a **Documentation** table up front, a new **Automation &
+    self-healing** section, and an updated menu/layout.
+  - `docs/safety.md`: how the gates behave under the unattended installer.
+  - `docs/troubleshooting.md`: a new "Auto-heal, dependencies and unattended
+    runs" section.
+
+### Changed
+- `repair.sh` is now a thin wrapper over `lib/fixes.sh` (`--check` delegates to
+  `heal.sh --check`), so there is a single source of truth for each fix.
+- `01-prepare.sh` and `03-install-proxmox.sh` install dependencies automatically
+  before doing anything else.
+- `preflight.sh` reports the dependency state (34 checks now); `04-verify.sh`
+  checks the required command-line tools are present.
+- The menu leads with **Auto install** and gains a **Repair / auto-heal**
+  submenu (heal now / check / add timer / remove timer).
+
+### Fixed
+- `autoinstall.sh --status` printed a duplicated "not installed" line, and
+  showed "1 of 4" for a run that had never started — it now says "not started".
+- `heal.sh --check` no longer emits trailing padding on short result lines.
+
 ## [1.3.0] — 2026-10-16
 
 ### Fixed

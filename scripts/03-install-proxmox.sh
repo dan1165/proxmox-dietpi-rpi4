@@ -49,6 +49,11 @@ cat <<EOF
 EOF
 gate_confirm "INSTALL-PROXMOX" "Type INSTALL-PROXMOX to begin installation" || exit 1
 
+# ---- dependencies ----------------------------------------------------------
+say "Required dependencies"
+ensure_deps --quiet || die "could not install the required dependencies (see above)"
+ensure_optional_deps || true
+
 # ---- install --------------------------------------------------------------
 if pve_installed; then
   say "Proxmox already installed ($(pveversion 2>/dev/null | head -1)) — checking for missing pieces"

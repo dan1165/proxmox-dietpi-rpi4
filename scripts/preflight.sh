@@ -141,6 +141,15 @@ fi
 # ---- 9. apt / packages ----------------------------------------------------
 run_chk hard "apt package lists are usable" bash -c 'apt-get -s update >/dev/null 2>&1 || apt-cache pkgnames >/dev/null'
 run_chk soft "ifupdown2 is installable" bash -c 'apt-cache policy ifupdown2 2>/dev/null | grep -q Candidate'
+
+# ---- 9b. required dependencies --------------------------------------------
+MISSING_DEPS=$(deps_missing)
+if [ -z "$MISSING_DEPS" ]; then
+  _p "all required dependencies present"
+else
+  _w "missing dependencies: $(printf '%s\n' "$MISSING_DEPS" | awk '{print $1}' | tr '\n' ' ')" \
+     "installed automatically by the installer / repair.sh / heal.sh"
+fi
 if pve_installed; then
   _p "Proxmox VE already installed (idempotent re-run)"
   RUNNING_CT=$(pct list 2>/dev/null | tail -n +2 | wc -l)

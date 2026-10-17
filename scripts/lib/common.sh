@@ -10,7 +10,7 @@
 # ---------------------------------------------------------------------------
 
 # shellcheck disable=SC2034
-PVE_RPI_VERSION="1.3.0"
+PVE_RPI_VERSION="1.4.0"
 
 # ---- colours (only when stdout is a terminal) -----------------------------
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -276,6 +276,29 @@ tui_menu() {
 
 # ---- misc -----------------------------------------------------------------
 hr() { printf '%s%s%s\n' "$C_DIM" "────────────────────────────────────────────────────────────" "$C_RESET"; }
+
+# Wait for the network to come back (used by the unattended installer after a
+# reboot, and by anything that runs from a boot-time unit).
+wait_for_network() { # wait_for_network [max-seconds]
+  local want="${1:-180}" waited=0
+  while [ "$waited" -lt "$want" ]; do
+    if ping -c1 -W2 "${PI_GATEWAY:-192.168.0.1}" >/dev/null 2>&1 \
+       || ping -c1 -W2 1.1.1.1 >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 5
+    waited=$((waited+5))
+  done
+  return 1
+}
+
+# ---- libraries ------------------------------------------------------------
+# Sourced last so they can use the helpers above. Both are pure definitions —
+# nothing runs on source.
+# shellcheck source=lib/deps.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/deps.sh"
+# shellcheck source=lib/fixes.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixes.sh"
 
 json_get() { # json_get <file> <python-expr-on-d>
   python3 -c '

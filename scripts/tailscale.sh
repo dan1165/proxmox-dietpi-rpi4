@@ -15,7 +15,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 require_root
 
 CHECK=0
-[ "${1:-}" = "--check" ] && CHECK=1
+AUTO=0
+for a in "$@"; do
+  case "$a" in
+    --check) CHECK=1 ;;
+    --auto)  AUTO=1 ;;
+  esac
+done
+[ "$AUTO" = 1 ] && { export ASSUME_YES=1 FORCE=1; }
 SUBNET="${PI_SUBNET:-}"
 [ -n "$SUBNET" ] || die "PI_SUBNET is empty — set it in 00-config.sh (e.g. 192.168.0.0/24)"
 LOG="$WORKDIR/tailscale.log"
@@ -95,21 +102,31 @@ if [ "$state" = "Running" ]; then
   ok "already logged in"
 else
   if [ "$CHECK" = 1 ]; then info "--check: would run 'tailscale up --advertise-routes=$SUBNET'"; exit 0; fi
-  confirm_yes "Authenticate this device as a subnet router for $SUBNET?" || die "cancelled"
-  say "Gate 2/3 — starting tailscale"
-  setsid nohup tailscale up --advertise-routes="$SUBNET" --accept-dns=false --timeout=0 >"$LOG" 2>&1 &
-  sleep 10
-  url=$(grep -oE 'https://login\.tailscale\.com/[a-z]/[A-Za-z0-9]+' "$LOG" | head -1)
-  if [ -n "$url" ]; then
-    printf '\n%s  ACTION REQUIRED — open this URL and approve the device:%s\n\n    %s%s%s\n\n' \
-      "$C_BOLD$C_YELLOW" "$C_RESET" "$C_BOLD$C_CYAN" "$url" "$C_RESET"
-    info "waiting up to 5 minutes for authentication…"
-    for _ in $(seq 1 30); do
-      sleep 10
-      state=$(tailscale status --json 2>/dev/null | python3 -c 'import sys,json;print(json.load(sys.stdin).get("BackendState","?"))' 2>/dev/null)
-      [ "$state" = "Running" ] && break
-    done
+  if [ "$AUTO" = 1 ]; then
+    [ -n "${TAILSCALE_AUTHKEY:-}" ] || die "--auto needs TAILSCALE_AUTHKEY (put it in scripts/00-config.local.sh)"
+    say "Authenticating with TAILSCALE_AUTHKEY (unattended)"
+    tailscale up --advertise-routes="$SUBNET" --accept-dns=false \
+      --auth-key="$TAILSCALE_AUTHKEY" 2>&1 | tail -5
+    sleep 5
+  else
+    confirm_yes "Authenticate this device as a subnet router for $SUBNET?" || die "cancelled"
+    say "Gate 2/3 — starting tailscale"
+    setsid nohup tailscale up --advertise-routes="$SUBNET" --accept-dns=false --timeout=0 >"$LOG" 2>&1 &
+    sleep 10
+    url=$(grep -oE 'https://login\.tailscale\.com/[a-z]/[A-Za-z0-9]+' "$LOG" | head -1)
+    if [ -n "$url" ]; then
+      printf '\n%s  ACTION REQUIRED — open this URL and approve the device:%s\n\n    %s%s%s\n\n' \
+        "$C_BOLD$C_YELLOW" "$C_RESET" "$C_BOLD$C_CYAN" "$url" "$C_RESET"
+      info "waiting up to 5 minutes for authentication…"
+    fi
   fi
+
+  # common: wait for the backend to come up
+  for _ in $(seq 1 30); do
+    state=$(tailscale status --json 2>/dev/null | python3 -c 'import sys,json;print(json.load(sys.stdin).get("BackendState","?"))' 2>/dev/null)
+    [ "$state" = "Running" ] && break
+    sleep 10
+  done
 fi
 
 # ---- gate 3: triple verification ------------------------------------------

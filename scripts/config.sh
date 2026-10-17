@@ -23,7 +23,7 @@ set -u
 LOCAL="$HERE/00-config.local.sh"
 
 # ---- managed keys ----------------------------------------------------------
-KEYS=(PI_HOSTNAME PI_IP PI_CIDR PI_GATEWAY PI_DNS NIC BRIDGE PI_SUBNET WORKDIR PVE_PACKAGES PVE_TEMPLATES)
+KEYS=(PI_HOSTNAME PI_IP PI_CIDR PI_GATEWAY PI_DNS NIC BRIDGE PI_SUBNET WORKDIR PVE_PACKAGES PVE_TEMPLATES AUTO_INSTALL_HEAL_TIMER AUTO_INSTALL_TAILSCALE AUTO_MAX_ATTEMPTS)
 declare -A DESC=(
   [PI_HOSTNAME]="Hostname of the Pi (must match \`hostname\`)"
   [PI_IP]="Static IP for the Pi / the Proxmox bridge"
@@ -36,6 +36,9 @@ declare -A DESC=(
   [WORKDIR]="Where backups/logs/helpers live on the Pi"
   [PVE_PACKAGES]="Proxmox packages to install"
   [PVE_TEMPLATES]="arm64 LXC templates to pre-download"
+  [AUTO_INSTALL_HEAL_TIMER]="Unattended install: add the hourly auto-heal timer (1/0)"
+  [AUTO_INSTALL_TAILSCALE]="Unattended install: also set up the Tailscale subnet router (1/0)"
+  [AUTO_MAX_ATTEMPTS]="Unattended install: retries per failing stage"
 )
 
 # ---- validators ------------------------------------------------------------
@@ -69,6 +72,8 @@ validate() { # validate <KEY> <VALUE>  -> 0 ok, prints reason on failure
     NIC|BRIDGE) is_ifname "$v" || { printf 'not a valid interface name'; return 1; } ;;
     PI_HOSTNAME) [[ "$v" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] || { printf 'not a valid hostname'; return 1; } ;;
     WORKDIR) [[ "$v" = /* ]] || { printf 'must be an absolute path'; return 1; } ;;
+    AUTO_INSTALL_HEAL_TIMER|AUTO_INSTALL_TAILSCALE) [[ "$v" =~ ^[01]$ ]] || { printf 'must be 0 or 1'; return 1; } ;;
+    AUTO_MAX_ATTEMPTS) [[ "$v" =~ ^[0-9]+$ ]] && [ "$v" -ge 1 ] && [ "$v" -le 10 ] || { printf 'must be 1-10'; return 1; } ;;
     *) : ;;
   esac
   return 0

@@ -43,6 +43,7 @@ pass_systemd() {
   chk "networking.service is active" systemctl is-active --quiet networking
   chk "iptables uses the nft backend" bash -c 'iptables -V | grep -q nf_tables'
   chk "memory cgroup controller available" bash -c 'grep -qw memory /sys/fs/cgroup/cgroup.controllers'
+  chk "required command-line tools present" bash -c 'for c in curl python3 ip ss ping getent flock; do command -v "$c" >/dev/null || exit 1; done'
 }
 
 # --- Pass B — raw processes, ports, HTTP (no systemd) -----------------------

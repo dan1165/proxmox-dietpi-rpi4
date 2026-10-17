@@ -273,7 +273,78 @@ journalctl -b -u networking --no-pager
 
 ---
 
-## 9. Nuclear option
+## 9. Auto-heal, dependencies and unattended runs
+
+### Is anything broken right now?
+
+```bash
+sudo ./heal.sh --check          # one line per known problem; changes nothing
+```
+
+Everything should read `[ OK ]`. If not, `sudo ./heal.sh` fixes the eight known
+issues and prints what it changed.
+
+### The auto-heal timer
+
+Once installed it runs at boot and hourly, logging to
+`/root/proxmox-setup/heal.log`:
+
+```bash
+sudo ./heal.sh --timer-status       # enabled? when does it run next?
+systemctl list-timers pve-pi-heal.timer
+journalctl -u pve-pi-heal.service -n 30
+tail -20 /root/proxmox-setup/heal.log
+sudo ./heal.sh --uninstall-timer
+```
+
+A run looks like this in the log:
+
+```
+=== heal run 2026-10-17T08:07:14+08:00 ===
+heal run finished: healed=0 warnings=0
+```
+
+Networking is intentionally **not** repaired by the timer (a timer that rewrites
+the network could drop your SSH session). To allow an `ifup` attempt:
+
+```bash
+sudo ./heal.sh --with-network
+```
+
+### Dependencies
+
+The scripts declare what they need and install anything missing:
+
+```bash
+. scripts/lib/common.sh; echo "$(deps_report)"
+# all required dependencies present
+```
+
+To see what *would* be installed without installing it:
+
+```bash
+NO_INSTALL_DEPS=1 sudo ./preflight.sh
+```
+
+### Unattended install
+
+```bash
+sudo ./autoinstall.sh            # start / continue
+sudo ./autoinstall.sh --status   # stage, attempts, whether the resume unit is armed
+sudo ./autoinstall.sh --abort    # stop and disarm (does not roll back)
+sudo ./autoinstall.sh --clean    # remove the snapshot + state files
+```
+
+It gives up after `AUTO_MAX_ATTEMPTS` failures per stage (default 3) to avoid
+boot loops, and tells you where to look. Log:
+`/root/proxmox-setup/autoinstall.log`.
+
+If it stopped mid-way, fix the cause and continue with
+`sudo /root/proxmox-setup/scripts/autoinstall.sh --foreground`.
+
+---
+
+## 10. Nuclear option
 
 Worst case, re-flash DietPi and start again — but you almost never need to.
 Because everything is backed up under `/root/proxmox-setup/backup/`, restoring
